@@ -1,0 +1,162 @@
+---
+title: "Estimating Cherry Blossom Bloom DOY Using Climate Similarity Analysis"
+author: "Isaac Hsu"
+date: "02/25/2024"
+lang: en-US
+format:
+  html:
+    embed-resources: true
+editor_options: 
+  markdown: 
+    wrap: sentence
+---
+
+```{r}
+#| label: setup
+#| include: false
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, error = FALSE, 
+                      message = FALSE,
+                      fig.align = 'center',
+                      out.width = '80%')
+```
+
+## **1. Introduction**
+
+Cherry blossom blooming time is closely linked to climate conditions such as **temperature, precipitation, wind speed, and sunshine duration**.
+To estimate the **DOY (Day of Year) of peak bloom** in 2025, we use **historical climate data from 1940-2024** to find the most **climatically similar years** to 2025.
+
+This method helps us predict when cherry trees in **Kyoto, Liestal, Washington D.C., Vancouver, and New York City** will bloom in 2025.
+
+## **2. Data Sources**
+
+We use the following datasets:
+
+-   **2025 Weather Data (`2025_weather_data_for_5_cities.csv`)**\
+    Contains climate data for the five target cities in 2025.
+
+-   **Historical Climate Data (`3cities_doy_weather_1940_2024.csv`)**\
+    Includes past climate records and cherry blossom bloom dates for Kyoto, Liestal, and Washington, D.C.
+
+## **3. Climate Variables Used for Similarity Analysis**
+
+To find historical years with similar weather conditions, we use the following climate indicators:
+
+-   **TMAX**: Maximum temperature
+
+-   **TMIN**: Minimum temperature
+
+-   **TAVG**: Average temperature
+
+-   **PRCP**: Total precipitation
+
+-   **WIND**: Wind speed
+
+-   **EVPR**: Evapotranspiration
+
+-   **SUND**: Sunshine duration
+
+-   **SUND5_cum, GDD5_cum, CDD7_cum**: Cumulative growing degree and chilling degree days
+
+-   **Weather Codes (CODE0, CODE1, ... CODE75)**: Categorical weather conditions
+
+## **4. Standardizing Climate Variables**
+
+To compare climate conditions fairly across different years, we **normalize** all climate variables using **Z-score standardization**.
+
+```{r}
+# Define standardization function
+normalize <- function(df, vars) {
+  df[vars] <- scale(df[vars])
+  return(df)
+}
+
+# Load data
+df_2025 <- read_csv("2025_weather_data_for_5_cities.csv")
+df_history <- read_csv("3cities_doy_weather_1940_2024.csv")
+
+# Standardize variables
+climate_variables <- c("TMAX", "TMIN", "TAVG", "PRCP", "WIND", "EVPR", "SUND",
+                       "SUND5_cum", "GDD5_cum", "CDD7_cum",
+                       "CODE0", "CODE1", "CODE2", "CODE3", "CODE51", 
+                       "CODE53", "CODE55", "CODE61", "CODE63", "CODE65", 
+                       "CODE71", "CODE73", "CODE75")
+
+df_history <- normalize(df_history, climate_variables)
+df_2025 <- normalize(df_2025, climate_variables)
+```
+
+## **5. Finding the Most Similar Historical Years**
+
+We find the **three most climatically similar years** for each city by computing **Euclidean distance** between the 2025 climate data and historical records.
+
+```{r}
+# Function to find similar years for Kyoto, Liestal, Washington
+find_similar_years_3cities <- function(city_name, df_2025, df_history, n=3) {
+  df_city_2025 <- df_2025 %>% filter(City == city_name)
+  df_city_history <- df_history %>% filter(City == city_name)
+  
+  distances <- df_city_history %>%
+    rowwise() %>%
+    mutate(distance = sum((c_across(all_of(climate_variables)) - df_city_2025[1, climate_variables])^2, na.rm = TRUE)) %>%
+    ungroup()
+  
+  closest_years <- distances %>%
+    arrange(distance) %>%
+    slice(1:n) %>%
+    select(Year, distance, City)
+  
+  return(closest_years)
+}
+
+# Function for Vancouver & New York City (since they lack historical records)
+find_similar_years_2other_cities <- function(city_name, df_2025, df_history, n=3) {
+  df_city_2025 <- df_2025 %>% filter(City == city_name)
+  
+  distances <- df_history %>%
+    rowwise() %>%
+    mutate(distance = sum((c_across(all_of(climate_variables)) - df_city_2025[1, climate_variables])^2, na.rm = TRUE)) %>%
+    ungroup()
+  
+  closest_years <- distances %>%
+    arrange(distance) %>%
+    slice(1:n) %>%
+    select(Year, distance, City)
+  
+  return(closest_years)
+}
+
+# Compute similar years for each city
+kyoto_similar <- find_similar_years_3cities("Kyoto", df_2025, df_history, n=3) %>% mutate(City_2025 = "Kyoto")
+liestal_similar <- find_similar_years_3cities("Liestal", df_2025, df_history, n=3) %>% mutate(City_2025 = "Liestal")
+washington_similar <- find_similar_years_3cities("Washington", df_2025, df_history, n=3) %>% mutate(City_2025 = "Washington")
+vancouver_similar <- find_similar_years_2other_cities("Vancouver", df_2025, df_history, n=3) %>% mutate(City_2025 = "Vancouver")
+nyc_similar <- find_similar_years_2other_cities("NewYorkCity", df_2025, df_history, n=3) %>% mutate(City_2025 = "NewYorkCity")
+
+# Combine results
+results <- bind_rows(kyoto_similar, liestal_similar, washington_similar, vancouver_similar, nyc_similar)
+```
+
+## **6. Computing the Average Bloom DOY**
+
+Now, we extract **bloom_doy** from the historical dataset and compute the **average bloom DOY** for each city.
+
+```{r}
+# Merge bloom DOY data
+df_history_selected <- df_history %>% select(Year, City, bloom_doy)
+results_updated <- results %>%
+  left_join(df_history_selected, by = c("Year", "City"))
+
+# Compute average bloom DOY for each city
+results_final <- results_updated %>%
+  group_by(City_2025) %>%
+  summarise(Average_Bloom_DOY = round(mean(bloom_doy, na.rm = TRUE), 2)) %>% 
+  ungroup()
+
+# Display results
+results_final
+```
+
+## **7. Conclusion**
+
+This study estimates **cherry blossom DOY for 2025** by identifying **historically similar climate years** and averaging bloom DOY.
+The method **accounts for climate variability** and helps predict bloom dates based on past trends.
